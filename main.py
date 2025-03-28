@@ -11,32 +11,48 @@ import subprocess
 GROQ_API_KEY = "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"
 client = Groq(api_key=GROQ_API_KEY)
 
-# Transcript Storage
+# Transcript storage
 transcript = []
 
 # Streamlit UI
 st.title("🎙️ AI Cold Calling Assistant")
 
-# Function to check microphone availability
+# Function to check microphone availability and list devices
 def is_microphone_available():
     try:
-        if not sr.Microphone.list_microphone_names():
-            return False
-        return True
-    except:
-        return False
+        mic_list = sr.Microphone.list_microphone_names()
+        if not mic_list:
+            return False, []
+        return True, mic_list
+    except Exception as e:
+        st.error(f"Error detecting microphones: {e}")
+        return False, []
 
-mic_available = is_microphone_available()
+mic_available, mic_names = is_microphone_available()
 
-# Show an error message immediately if no microphone is detected
-if not mic_available:
+if mic_available:
+    st.info("Available Microphones:")
+    for i, name in enumerate(mic_names):
+        st.write(f"{i}: {name}")
+else:
     st.error("🚫 No microphone detected! Please connect a microphone and restart.")
+
+# Optionally, let the user select a microphone by its index
+device_index = None
+if mic_available:
+    default_index = 0  # default to first available microphone
+    device_index = st.number_input("Select microphone index", min_value=0, max_value=len(mic_names)-1, value=default_index, step=1)
 
 # Function to recognize speech
 def recognize_speech(timeout=5, language="en"):
     recognizer = sr.Recognizer()
     try:
-        with sr.Microphone() as source:
+        # If device_index is set, use that microphone
+        if device_index is not None:
+            mic = sr.Microphone(device_index=int(device_index))
+        else:
+            mic = sr.Microphone()
+        with mic as source:
             st.info("🎤 Listening...")
             recognizer.adjust_for_ambient_noise(source)
             audio = recognizer.listen(source, timeout=timeout)
@@ -45,14 +61,16 @@ def recognize_speech(timeout=5, language="en"):
             transcript.append(f"User: {text}")  # Save user input
             return text.lower()
     except sr.WaitTimeoutError:
+        st.error("⏰ Listening timed out!")
         return None
     except sr.UnknownValueError:
+        st.error("🤔 Could not understand audio!")
         return None
     except sr.RequestError:
         st.error("🔴 Speech recognition service error.")
         return None
-    except:
-        st.error("🚫 No microphone detected! Please connect a microphone and restart.")
+    except Exception as e:
+        st.error(f"🚫 Error: {e}")
         return None
 
 # Function to generate AI response
@@ -72,10 +90,14 @@ def speak(text, language="en"):
     tts = gTTS(text=text, lang=language)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
         tts.save(fp.name)
-        os.system(f"start {fp.name}" if os.name == "nt" else f"afplay {fp.name}")
+        # Use the appropriate command for your OS
+        if os.name == "nt":
+            os.system(f"start {fp.name}")
+        else:
+            os.system(f"afplay {fp.name}")
     transcript.append(f"AI: {text}")  # Save AI response
 
-# Function to classify intent
+# Function to classify intent based on keywords in user input
 def classify_intent(user_input):
     if "clone" in user_input:
         return "clone_repo"
@@ -86,20 +108,26 @@ def classify_intent(user_input):
     else:
         return "unknown"
 
-# Function to execute cloning
+# Function to execute repository cloning
 def clone_repo():
-    repo_url = "https://github.com/your-repo.git"  # Change to actual repo
+    repo_url = "https://github.com/your-repo.git"  # Change to your actual repo URL
     st.info("🛠️ Cloning repository...")
-    subprocess.run(["git", "clone", repo_url], check=True)
-    st.success("✅ Repository cloned successfully!")
+    try:
+        subprocess.run(["git", "clone", repo_url], check=True)
+        st.success("✅ Repository cloned successfully!")
+    except Exception as e:
+        st.error(f"Error cloning repository: {e}")
 
-# Function to save transcript
+# Function to save the transcript to a file
 def save_transcript():
-    with open("call_transcript.txt", "w", encoding="utf-8") as file:
-        file.write("\n".join(transcript))
-    st.success("📄 Call transcript saved!")
+    try:
+        with open("call_transcript.txt", "w", encoding="utf-8") as file:
+            file.write("\n".join(transcript))
+        st.success("📄 Call transcript saved!")
+    except Exception as e:
+        st.error(f"Error saving transcript: {e}")
 
-# AI Call with Voice Commands
+# Main AI call flow triggered by button
 if mic_available:
     if st.button("🎙️ Start AI Call"):
         intro = "Hello! How can I assist you today?"
@@ -123,3 +151,5 @@ if mic_available:
                 ai_response = generate_ai_response(user_request)
                 st.write(f"🤖 **AI:** {ai_response}")
                 speak(ai_response)
+else:
+    st.warning("Please connect a microphone to start the AI call.")
